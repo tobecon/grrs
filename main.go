@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io/fs"
 	"io/ioutil"
 	"os"
 	"strings"
-	"sync"
+	"time"
 )
 
 type FileInfo struct {
@@ -15,33 +16,33 @@ type FileInfo struct {
 	LineCount int32
 }
 
-var wg sync.WaitGroup
-
 func main() {
 
 	patthern := os.Args[1]
 	dir := os.Args[2]
 	entries, err := ioutil.ReadDir(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*400)
+	defer cancel()
+	errCh := make(chan int)
+	go wordDirWithTimeOut(ctx, errCh, entries, patthern, dir)
 	if err == nil {
-		// for _, f := range entries {
-		// 	if !f.IsDir() {
-		// 		wg.Add(1)
-		// 		go matchPattern(patthern, dir+"\\"+f.Name())
-		// 	} else {
-
-		// 	}
-		// }
-		err := workDir(entries, patthern, dir)
-		if err != nil {
-			fmt.Println(err)
+		select {
+		case <-ctx.Done():
+			fmt.Println("end!")
+		case i := <-errCh:
+			fmt.Println(i)
 		}
 	}
-	wg.Wait()
 }
 
-func workDir(entries []fs.FileInfo, patthern string, prefix string) (error error) {
+func wordDirWithTimeOut(ctx context.Context, ch chan int, entries []fs.FileInfo, patthern string, prefix string) {
+	workDir(ctx, ch, entries, patthern, prefix)
+	ch <- 0
+}
+
+func workDir(ctx context.Context, ch chan int, entries []fs.FileInfo, patthern string, prefix string) {
 	if len(entries) == 0 {
-		return
+		//ch <- 0 // 为了持续阻塞 chan , 让程序不退出. 所以不需要在这个发信号  chan
 	} else {
 		for _, f := range entries {
 			if !f.IsDir() {
@@ -50,24 +51,19 @@ func workDir(entries []fs.FileInfo, patthern string, prefix string) (error error
 				curPrefix := prefix + "\\" + f.Name()
 				curentries, err := ioutil.ReadDir(prefix + "\\" + f.Name())
 				if err == nil {
-					workDir(curentries, patthern, curPrefix)
-				} else {
-					return err
+					workDir(ctx, ch, curentries, patthern, curPrefix)
 				}
 			}
 		}
 	}
-	return
 }
 
 func matchPattern(pattern string, path string) (err error) {
-	wg.Add(1)
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	defer wg.Done()
 	reader := bufio.NewScanner(file)
 	reader.Split(bufio.ScanLines)
 	fileInfo := FileInfo{path, 0}
